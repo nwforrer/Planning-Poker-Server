@@ -1,14 +1,12 @@
 extends Node
 
+const MAX_SESSIONS := 10
+const ALPHA := "abcdefghijklmnopqrstuvwxyz"
+
 var peer: WebSocketServer = null
 
-var sessions := {
-	"abc": [],
-	"def": [],
-	"ghi": [],
-	"jkl": [],
-	"mno": []
-}
+# dictionary of string:array
+var sessions := {}
 
 var players := {}
 
@@ -18,6 +16,16 @@ func _ready():
 	get_tree().connect("network_peer_connected", self, "_on_peer_connected")
 	
 	peer = WebSocketServer.new()
+	if OS.has_environment("GD_PRIVATE_KEY") and OS.has_environment("GD_CERT"):
+		var key_path := OS.get_environment("GD_PRIVATE_KEY")
+		var crt_path := OS.get_environment("GD_CERT")
+		var key := CryptoKey.new()
+		key.load(key_path)
+		var crt := X509Certificate.new()
+		crt.load(crt_path)
+		
+		peer.private_key = key
+		peer.ssl_certificate = crt
 	peer.listen(5555, PoolStringArray(["ludus"]), true)
 	get_tree().set_network_peer(peer)
 	get_tree().connect("server_disconnected", self, "_on_close_network")
@@ -26,11 +34,12 @@ func _ready():
 remote func create_session():
 	print("create_session")
 	var id := get_tree().get_rpc_sender_id()
-	for s in sessions:
-		if sessions[s].size() == 0:
-			sessions[s].append(id)
-			players[id] = s
-			rpc_id(id, "respond_create_session", s)
+	if sessions.size() < MAX_SESSIONS:
+		var session_name := _generate_session_name()
+		if session_name != "":
+			sessions[session_name] = [id]
+			players[id] = session_name
+			rpc_id(id, "respond_create_session", session_name)
 			return
 	rpc_id(id, "no_available_sessions")
 
@@ -100,8 +109,21 @@ func _on_peer_disconnected(id: int):
 			if p != id:
 				rpc_id(p, "player_disconnected", id)
 		sessions[session].erase(id)
+		if sessions[session].size() == 0:
+			sessions.erase(session)
 		players.erase(id)
 
 
 func _on_close_network():
 	print("closing network")
+
+
+func _generate_session_name() -> String:
+	for tries in range(20):
+		var session_name := ""
+		for i in range(3):
+			var c := ALPHA[randi() % 26]
+			session_name += c
+		if not session_name in sessions:
+			return session_name
+	return ""
